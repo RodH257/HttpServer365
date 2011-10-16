@@ -12,6 +12,7 @@
 
 #define HTTP_PORT 80
 #define BACKLOG 10
+#define RCVBUFSIZE 1024
 
 int main(int argc, char *argv[])
 {
@@ -46,6 +47,8 @@ int main(int argc, char *argv[])
 
 	printf("HTTP Server now listening....\n");
 
+	char *buffer = malloc(RCVBUFSIZE);
+
 	//accept connections
 	while(1) { 
 		sin_size = sizeof(struct sockaddr_in);
@@ -62,6 +65,15 @@ int main(int argc, char *argv[])
 			inet_ntoa(their_addr.sin_addr));
 		
 		if (!fork()) { 
+			int recvMsgSize;
+			if ((recvMsgSize = recv(new_fd, buffer, RCVBUFSIZE,0)) <0)
+			{
+				//error
+			} else {
+				printf("Message received: %s\n", buffer);
+			}
+			
+
 			//child process, serve result
 			if (send(new_fd, "Hello, world!\n", 14, 0) == -1)
 				perror("send");
