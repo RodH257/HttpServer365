@@ -13,13 +13,14 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdbool.h>
+#include "connection_queue.h"
 
 #define BACKLOG 10
 #define RCVBUFSIZE 1024
 #define SENDBUFSIZE 1024
 #define MAXPATHSIZE 1024
 #define DOCS_PATH "htdocs/"
-#define QUEUE_SIZE 30
+#define THREAD_POOL_SIZE 30
 
 size_t readline(int socket, char* buf, size_t size);
 void write_line(int socket, char* str);
@@ -32,63 +33,19 @@ void *connection_consumer (void *param);
 int http_socket_fd; //the file descriptor for main socket
 int server_port; //port that it is listening on
 
-//Thread pool variables
-int connection_queue[QUEUE_SIZE];
-int keep_running;
-pthread_mutex_t queue_mutex;
-pthread_mutex_t running_check_lock;
-sem_t slots_free;
-sem_t slots_used;
-int insert_pointer = 0, remove_pointer = 0;
+pthread_t thread_pool[THREAD_POOL_SIZE];
+connection_queue_t *connection_queue;
 
 
 void *connection_consumer (void *param)
 {
     while (true)
     {
-        int curValue;
-        sem_getvalue(&slots_used, &curValue);
-
-        printf("Waiting for connection \n");
-        //block until there's a connection there
-        sem_wait(&slots_used);
-        printf("Connection there \n");
-        //check if we are to exit
-        //get the running_check_lock
-        pthread_mutex_lock(&running_check_lock);
-        if (!keep_running)
-        {
-            //we're exiting.
-            pthread_mutex_unlock(&running_check_lock);
-            //post to slots_free so that producer thread isnt blocked
-            sem_post(&slots_free);
-            return 0;
-        }
-
-        //still running, give back the lock and carry on
-        pthread_mutex_unlock(&running_check_lock);
-
-        //handle the connection
-        pthread_mutex_lock(&queue_mutex);
-
-        int connection_fd  = connection_queue[remove_pointer++];
-        remove_pointer = remove_pointer % QUEUE_SIZE;
-        connection_queue[remove_pointer] = -1;
-
-        sem_post(&slots_free);
-        pthread_mutex_unlock(&queue_mutex);
+        int connection_fd = get_next_connection(connection_queue);
 
         printf("Handling connection %d \n", connection_fd);
         //handle connection
         connection_handler(connection_fd);
-
-
-        //now sleep for 0.5 seconds
-        //  struct timespec sleepTime;
-        //  struct timespec returnTime;
-        //  sleepTime.tv_sec = 0;
-        //  sleepTime.tv_nsec = 500000000;
-        //   nanosleep(&sleepTime, &returnTime);
     }
     return 0;
 }
@@ -191,26 +148,23 @@ int main(int argc, char *argv[])
     //create sigint handler
     signal(SIGINT, sigint_handler);
 
-
-    //initialize locks
-    pthread_mutex_init(&queue_mutex, NULL);
-    pthread_mutex_init(&running_check_lock, NULL);
-    sem_init(&slots_free, 0, QUEUE_SIZE);
-    sem_init(&slots_used, 0, 0);
-
-    //create consumer thread
-    pthread_t consumerThread;
-    keep_running = true;
-
-    if (pthread_create(&consumerThread, NULL, connection_consumer, NULL))
+    //create connection queue
+    connection_queue = (connection_queue_t*)malloc(sizeof(connection_queue_t));
+    setup_queue(connection_queue);
+    //create consumer threads
+    int thread_index = 0;
+    while (thread_index < THREAD_POOL_SIZE)
     {
-        //there was an error creating the consumer
-        printf("Error creating consumer thread");
-        abort();
+        pthread_t consumer_thread;
+        if (pthread_create(&consumer_thread, NULL, connection_consumer, NULL))
+        {
+            //there was an error creating the consumer
+            perror("Error creating consumer thread");
+            exit(1);
+        }
+        thread_pool[thread_index] = consumer_thread;
+        thread_index++;
     }
-
-
-
 
     //setup socket
     int connection_fd;
@@ -260,18 +214,9 @@ int main(int argc, char *argv[])
     //accept connections
     while(1)
     {
-        //make sure there is room on the queue
-        int curValue;
-        sem_getvalue(&slots_free, &curValue);
+        //todo: test to see if perhaps we should wait here for new slot before accepting connection
 
         sin_size = sizeof(struct sockaddr_in);
-
-        if (curValue <= 0)
-            printf("Connection queue is full.\n");
-
-        //wait until there is a free berth
-        sem_wait(&slots_free);
-
         //accept new connection
         if ((connection_fd = accept(http_socket_fd, (struct sockaddr *)&their_addr,
                                     &sin_size)) == -1)
@@ -284,30 +229,21 @@ int main(int argc, char *argv[])
         printf("server: got connection from %s\n",
                inet_ntoa(their_addr.sin_addr));
 
-        //add the connection to the queue for threads to process
-        //Acquire lock to protect queue
-        pthread_mutex_lock(&queue_mutex);
-
-        //choose smallest queue position to insert into
-        connection_queue[insert_pointer++] = connection_fd;
-        insert_pointer = insert_pointer % QUEUE_SIZE;
-
-        printf("Queued connection %d,  next free slot at %d \n", connection_fd, insert_pointer);
-
-        //signal there's been one added
-        sem_post(&slots_used);
-
-        //Release queue lock
-        pthread_mutex_unlock(&queue_mutex);
+        //add it to the queue
+        add_connection(connection_queue,  connection_fd);
 
     }
     close(connection_fd);
-
-    if (pthread_join(consumerThread, NULL))
+    thread_index = 0;
+    while (thread_index < THREAD_POOL_SIZE)
     {
-        printf("error joining consumer");
-        abort();
+        if (pthread_join(thread_pool[thread_index], NULL))
+        {
+            printf("error joining consumer");
+            abort();
+        }
     }
+
 
     //clean up any child processes
     while(waitpid(-1,NULL,WNOHANG) > 0);
