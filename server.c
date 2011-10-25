@@ -52,7 +52,7 @@ void *connection_consumer (void *param)
         printf("Waiting for connection \n");
         //block until there's a connection there
         sem_wait(&slots_used);
-printf("Connection there \n");
+        printf("Connection there \n");
         //check if we are to exit
         //get the running_check_lock
         pthread_mutex_lock(&running_check_lock);
@@ -108,7 +108,7 @@ void connection_handler(int connection_fd)
     char discardBuffer[RCVBUFSIZE] = "Buffer";
 
     //get rid of headers
-    while ((numchars > 0) && strcmp("\n", discardBuffer))  /* read & discard headers */
+    while ((numchars > 0) && strcmp("\n", discardBuffer) && strcmp("\n", buffer))
         numchars = readline(connection_fd, discardBuffer, RCVBUFSIZE);
 
 
