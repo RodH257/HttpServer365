@@ -17,10 +17,9 @@ typedef struct connection_queue
 
     //synchronization variables
     pthread_mutex_t queue_mutex;
-    pthread_mutex_t running_check_lock;
-
     sem_t slots_free;
     sem_t slots_used;
+
 } connection_queue_t;
 
 

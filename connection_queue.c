@@ -2,11 +2,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+
+/*
+* Initializes the connection_queue data structure with size
+* set in QUEUE_SIZE. Sets up semaphores and mutexes
+* PRE: queue has memory allocated
+* POST: connection queue will be fully initialized and ready to use
+* PARAMS: queue - the connection_queue to initialize
+*/
 void setup_queue(connection_queue_t *queue)
 {
     //initialize locks
     pthread_mutex_init(&queue->queue_mutex, NULL);
-    pthread_mutex_init(&queue->running_check_lock, NULL);
     sem_init(&queue->slots_free, 0, QUEUE_SIZE);
     sem_init(&queue->slots_used, 0, 0);
 
@@ -14,6 +21,13 @@ void setup_queue(connection_queue_t *queue)
     queue->last = QUEUE_SIZE-1;
 }
 
+
+/*
+* Adds a connection to the queue
+* PRE: queue is initialized and connection is active
+* POST: connection is added to the next free slot in the queue and queue markers updated
+* PARAMS: the queue to add too, connection to add
+*/
 void add_connection(connection_queue_t *queue, int connection)
 {
 
@@ -38,6 +52,13 @@ void add_connection(connection_queue_t *queue, int connection)
     pthread_mutex_unlock(&queue->queue_mutex);
 }
 
+
+/*
+* Gets the next connection to process. Blocks until there is one.
+* PRE: queue is initialized
+* POST: next connection from queue will be returned and queue markers updated
+* PARAMS: queue to operate on
+*/
 int get_next_connection(connection_queue_t *queue)
 {
     int cur_value;

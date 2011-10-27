@@ -1,42 +1,39 @@
+#include "server.h"
+#include "connection_queue.h"
+
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
 #include <string.h>
 #include <sys/types.h>
-#include <netinet/in.h>
 #include <ctype.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdbool.h>
-#include "connection_queue.h"
 
 #define BACKLOG 10
-#define RCVBUFSIZE 1024
-#define SENDBUFSIZE 1024
-#define MAXPATHSIZE 1024
+#define RCV_BUFFER_SIZE 1024
+#define SEND_BUFFER_SIZE 1024
+#define MAX_PATH_SIZE 1024
 #define DOCS_PATH "htdocs/"
 #define THREAD_POOL_SIZE 30
 
-size_t readline(int socket, char* buf, size_t size);
-void write_line(int socket, char* str);
-void sigint_handler(int sig);
 
+int http_socket_fd; //file descriptor for main socket
+pthread_t thread_pool[THREAD_POOL_SIZE]; //thread pool for handling connections
+connection_queue_t *connection_queue; //connection queue handler
 
-void connection_handler (int connection_fd);
-void *connection_consumer (void *param);
-
-int http_socket_fd; //the file descriptor for main socket
-int server_port; //port that it is listening on
-
-pthread_t thread_pool[THREAD_POOL_SIZE];
-connection_queue_t *connection_queue;
-
-
+/*
+* Gets the next connection from the connection queue and
+* calls the handler method. Connection queue will block until
+* a connection is added
+* PRE: connection_queue initialized
+* POST: connections will be handled
+* PARAMS: void thread param, not used.
+*/
 void *connection_consumer (void *param)
 {
     while (true)
@@ -50,23 +47,28 @@ void *connection_consumer (void *param)
     return 0;
 }
 
-//Handles certain connection
+/*
+* Handles a particular connection.
+* PRE: connection_fd is established
+* POST: connection will be read from and responed to
+* PARAMS: connection_fd, indicates which connection to handle
+*/
 void connection_handler(int connection_fd)
 {
-    char buffer[RCVBUFSIZE];
+    char buffer[RCV_BUFFER_SIZE];
     printf("receiving \n");
-    if (readline(connection_fd, buffer, RCVBUFSIZE) > 0)
+    if (readline(connection_fd, buffer, RCV_BUFFER_SIZE) > 0)
     {
         printf("Received %s", buffer);
     }
 
     int numchars = 1;
     //buffer to be discarded
-    char discardBuffer[RCVBUFSIZE] = "Buffer";
+    char discardBuffer[RCV_BUFFER_SIZE] = "Buffer";
 
     //get rid of headers
     while ((numchars > 0) && strcmp("\n", discardBuffer) && strcmp("\n", buffer))
-        numchars = readline(connection_fd, discardBuffer, RCVBUFSIZE);
+        numchars = readline(connection_fd, discardBuffer, RCV_BUFFER_SIZE);
 
 
     char response200[] = "HTTP/1.0 200 OK\r\n";
@@ -82,10 +84,10 @@ void connection_handler(int connection_fd)
         printf("GET request \n");
 
         //all files under htdocs, so append this to path
-        char filePath[MAXPATHSIZE] = DOCS_PATH;
+        char filePath[MAX_PATH_SIZE] = DOCS_PATH;
 
         int path_index = 4;
-        while (!isspace((int)buffer[path_index]) && path_index < (MAXPATHSIZE - 7))
+        while (!isspace((int)buffer[path_index]) && path_index < (MAX_PATH_SIZE - 7))
         {
             filePath[(path_index+2)] = buffer[path_index];
             path_index++;
@@ -111,7 +113,7 @@ void connection_handler(int connection_fd)
         }
         else
         {
-            char fileBuffer[RCVBUFSIZE];
+            char fileBuffer[SEND_BUFFER_SIZE];
             printf("Found file \n");
             //send headers
             write_line(connection_fd, response200);
@@ -126,14 +128,19 @@ void connection_handler(int connection_fd)
             write_line(connection_fd, "\r\n\r\n");
         }
 
-
         printf("Done \n");
         close(connection_fd);
     }
 
 }
 
-
+/*
+* Main method, reads arguments, creates threads and starts listening for connections
+* PRE: argv contains the port number to listen on
+* POST: server will be created, handler threads begun, connection listened to.
+*       connection stays open until SIGINT
+* PARAMS: argc, argv - command line arguments
+*/
 int main(int argc, char *argv[])
 {
     //check that port was supplied
@@ -143,7 +150,7 @@ int main(int argc, char *argv[])
         exit(0);
     }
 
-    server_port = atoi(argv[1]);
+    int server_port = atoi(argv[1]);
 
     //create sigint handler
     signal(SIGINT, sigint_handler);
@@ -209,13 +216,9 @@ int main(int argc, char *argv[])
 
     printf("HTTP Server now listening....\n");
 
-
-
     //accept connections
     while(1)
     {
-        //todo: test to see if perhaps we should wait here for new slot before accepting connection
-
         sin_size = sizeof(struct sockaddr_in);
         //accept new connection
         if ((connection_fd = accept(http_socket_fd, (struct sockaddr *)&their_addr,
@@ -233,6 +236,9 @@ int main(int argc, char *argv[])
         add_connection(connection_queue,  connection_fd);
 
     }
+
+    //program should be closed by sigint, but for the sake of completeness
+    // and future development we will clean up here.
     close(connection_fd);
     thread_index = 0;
     while (thread_index < THREAD_POOL_SIZE)
@@ -244,18 +250,18 @@ int main(int argc, char *argv[])
         }
     }
 
+    free(connection_queue);
 
-    //clean up any child processes
-    while(waitpid(-1,NULL,WNOHANG) > 0);
 }
 
-
-
-
-//reads a line from the socket
-//line can end in \r, \r\n or \n and it will stop there.
-//if line is bigger than the buffer, it will end there as well.
-size_t readline(int socket, char* buffer, size_t size)
+/*
+* Reads a line from the connection. Reads up to the buffer length or
+* until it reads \r, \r\n or \n
+* PRE: connection is established
+* POST: line will be read into buffer and size of line returned
+* PARAMS: the connection to listen on, buffer to store data and max size of buffer.
+*/
+size_t readline(int connection, char* buffer, size_t size)
 {
     int i = 0;
     char c = '\0';
@@ -264,7 +270,7 @@ size_t readline(int socket, char* buffer, size_t size)
     while((i < size-1) && (c != '\n'))
     {
         //receive one character at a time from the socket
-        recv_size = recv(socket, &c, 1, 0);
+        recv_size = recv(connection, &c, 1, 0);
 
         if (recv_size > 0)
         {
@@ -274,11 +280,11 @@ size_t readline(int socket, char* buffer, size_t size)
             {
                 //got start of carriage return, check for newline
                 //MSG_PEEK lets us read the next data without affecting the position
-                recv_size = recv(socket, &c, 1, MSG_PEEK);
+                recv_size = recv(connection, &c, 1, MSG_PEEK);
                 if ((recv_size >0) && (c == '\n'))
                 {
                     //we've got a crlf, lets actually receive that last \n
-                    recv(socket, &c, 1, 0);
+                    recv(connection, &c, 1, 0);
                 }
                 else
                 {
@@ -300,22 +306,27 @@ size_t readline(int socket, char* buffer, size_t size)
     return i;
 }
 
-
-void write_line(int socket, char* str)
+/*
+* Writes a line to the conncetion
+* PRE: connection is established, str contains appropriate data
+* POST:  data will be sent over c onnection
+* PARAMS:  connection to send on, string to send
+*/
+void write_line(int connection, char* str)
 {
-    // char* newString = strcat(str, "\r\n");
     printf("Sending response %s", str );
-    if (send(socket, str,(int)strlen(str), 0) == -1)
+    if (send(connection, str,(int)strlen(str), 0) == -1)
         perror("Unable to send line");
 }
 
+/*
+* Ensures that the socket is properly closed on SIGINT
+* PRE: connection is established
+* POST: connection closed and program exits
+*/
 void sigint_handler(int sig)
 {
     printf("\nClosing Socket....\n");
-
-    //clean up any child processes
-    while(waitpid(-1,NULL,WNOHANG) > 0);
     close(http_socket_fd);
-
     exit(0);
 }
