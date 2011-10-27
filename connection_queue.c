@@ -39,11 +39,10 @@ void add_connection(connection_queue_t *queue, int connection)
 
     //update last
     queue->last = ++queue->last % QUEUE_SIZE;
-
     //add to queue
     queue->connection_queue[queue->last] = connection;
 
-    printf("Queued connection %d,  next free slot at %d \n", connection, queue->last);
+    printf("Queued connection %d,  at position %d \n", connection, queue->last);
 
     //signal there's been one added
     sem_post(&queue->slots_used);
@@ -71,7 +70,7 @@ int get_next_connection(connection_queue_t *queue)
     pthread_mutex_lock(&queue->queue_mutex);
 
     //get next connection and update queue
-    int next_connection = queue->first;
+    int next_connection = queue->connection_queue[queue->first];
     queue->first = ++queue->first % QUEUE_SIZE;
 
     sem_post(&queue->slots_free);

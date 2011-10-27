@@ -60,14 +60,21 @@ void connection_handler(int connection_fd)
     if (readline(connection_fd, buffer, RCV_BUFFER_SIZE) > 0)
     {
         printf("Received %s", buffer);
+    } else{
+      printf("Received no data");
+      return;
     }
+
+    //todo: check for line longer htan buffer?
+    //&& strcmp("\n", buffer)
 
     int numchars = 1;
     //buffer to be discarded
     char discardBuffer[RCV_BUFFER_SIZE] = "Buffer";
 
+
     //get rid of headers
-    while ((numchars > 0) && strcmp("\n", discardBuffer) && strcmp("\n", buffer))
+    while ((numchars > 0) && strcmp("\n", discardBuffer) )
         numchars = readline(connection_fd, discardBuffer, RCV_BUFFER_SIZE);
 
 
@@ -269,9 +276,9 @@ size_t readline(int connection, char* buffer, size_t size)
 
     while((i < size-1) && (c != '\n'))
     {
+
         //receive one character at a time from the socket
         recv_size = recv(connection, &c, 1, 0);
-
         if (recv_size > 0)
         {
             //receive successfull
@@ -298,11 +305,14 @@ size_t readline(int connection, char* buffer, size_t size)
         else
         {
             c = '\n';
+            printf("ended");
         }
     }
 
     //terminate it with null
     buffer[i] = '\0';
+
+    printf("returning %s", buffer);
     return i;
 }
 
