@@ -71,7 +71,7 @@ int main(int argc, char *argv[])
         if (first){
            printf("Received: \n");
         }
-        //if we got no response at all, print nothign
+        //if we got no response at all, print nothing
         if (first && numbytes == 0)
         {
             printf("Nothing! \n");

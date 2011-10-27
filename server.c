@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
-#include <semaphore.h>
 #include <stdbool.h>
 
 #define BACKLOG 10
@@ -65,8 +64,7 @@ void connection_handler(int connection_fd)
       return;
     }
 
-    //todo: check for line longer htan buffer?
-    //&& strcmp("\n", buffer)
+ 
 
     int numchars = 1;
     //buffer to be discarded
