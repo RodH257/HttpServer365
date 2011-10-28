@@ -1,6 +1,6 @@
 #ifndef CONNECTION_QUEUE_H
 #define CONNECTION_QUEUE_H
-#define QUEUE_SIZE 30
+#define QUEUE_SIZE 100 //up to 100 connections can be queued in backlog
 
 #include <pthread.h>
 #include <semaphore.h>

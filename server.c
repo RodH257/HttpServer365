@@ -19,6 +19,7 @@
 #define MAX_PATH_SIZE 1024
 #define DOCS_PATH "htdocs/"
 #define THREAD_POOL_SIZE 30
+#define IP_ADDRESS_LENGTH 20
 
 
 int http_socket_fd; //file descriptor for main socket
@@ -38,9 +39,6 @@ void *connection_consumer (void *param)
     while (true)
     {
         int connection_fd = get_next_connection(connection_queue);
-
-        printf("Handling connection %d \n", connection_fd);
-        //handle connection
         connection_handler(connection_fd);
     }
     return 0;
@@ -55,26 +53,19 @@ void *connection_consumer (void *param)
 void connection_handler(int connection_fd)
 {
     char buffer[RCV_BUFFER_SIZE];
-    printf("receiving \n");
-    if (readline(connection_fd, buffer, RCV_BUFFER_SIZE) > 0)
+    if (readline(connection_fd, buffer, RCV_BUFFER_SIZE) <= 0)
     {
-        printf("Received %s", buffer);
-    } else{
-      printf("Received no data");
+      printf("Received no data \n");
       return;
     }
-
- 
 
     int numchars = 1;
     //buffer to be discarded
     char discardBuffer[RCV_BUFFER_SIZE] = "Buffer";
 
-
     //get rid of headers
     while ((numchars > 0) && strcmp("\n", discardBuffer) )
         numchars = readline(connection_fd, discardBuffer, RCV_BUFFER_SIZE);
-
 
     char response200[] = "HTTP/1.0 200 OK\r\n";
     char response404[] = "HTTP/1.0 404 NOT FOUND\r\n";
@@ -86,32 +77,50 @@ void connection_handler(int connection_fd)
     if (strstr(buffer, "GET ") == buffer)
     {
         //its a GET request
-        printf("GET request \n");
-
         //all files under htdocs, so append this to path
         char filePath[MAX_PATH_SIZE] = DOCS_PATH;
 
+        //also write to another string to display in console properly
+        char outputPath[MAX_PATH_SIZE];
+
+        //pad the index of the path in the request string by 4 for 'GET '
         int path_index = 4;
+
         while (!isspace((int)buffer[path_index]) && path_index < (MAX_PATH_SIZE - 7))
         {
             filePath[(path_index+2)] = buffer[path_index];
+            outputPath[(path_index-4)] = buffer[path_index];
             path_index++;
         }
+        struct sockaddr_in their_addr; //client addres
+        int addrsize =  sizeof(struct sockaddr_in) ;
+        //get the peers IP address for output
+        getpeername(connection_fd,(struct sockaddr *)&their_addr,&addrsize);
+
+        socklen_t len;
+        struct sockaddr_storage addr;
+        char ipstr[IP_ADDRESS_LENGTH];
+        len = sizeof addr;
+
+        getpeername(connection_fd, (struct sockaddr*)&addr, &len);
+        struct sockaddr_in *s = (struct sockaddr_in *)&addr;
+        inet_ntop(AF_INET, &s->sin_addr, ipstr, sizeof ipstr);
+
+        printf("GET '%s' from %s ", outputPath, ipstr);
 
         //asked for default path, so set it to be index.html
         if (strcmp(filePath, DOCS_PATH) == 0)
         {
             strcat(filePath, "index.html");
         }
-        printf("Reading file %s \n", filePath);
-
 
         //open file for reading
         FILE *fileData = fopen(filePath, "r");
+
         if (fileData == NULL)
         {
             //not found, 404
-            printf("File not found\n");
+            printf("FILE NOT FOUND \n");
             write_line(connection_fd, response404);
             write_line(connection_fd, headers);
             write_line(connection_fd, "<html><body>404 Not Found</body></html>\r\n\r\n");
@@ -119,7 +128,7 @@ void connection_handler(int connection_fd)
         else
         {
             char fileBuffer[SEND_BUFFER_SIZE];
-            printf("Found file \n");
+            printf("\n");
             //send headers
             write_line(connection_fd, response200);
             write_line(connection_fd, headers);
@@ -131,9 +140,9 @@ void connection_handler(int connection_fd)
             }
 
             write_line(connection_fd, "\r\n\r\n");
+            fclose(fileData);
         }
 
-        printf("Done \n");
         close(connection_fd);
     }
 
@@ -219,7 +228,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    printf("HTTP Server now listening....\n");
+    printf("Server is listening on port %d\n", server_port);
 
     //accept connections
     while(1)
@@ -232,10 +241,6 @@ int main(int argc, char *argv[])
             perror("Unable to accept connection");
             continue;
         }
-
-        //connection accepted
-        printf("server: got connection from %s\n",
-               inet_ntoa(their_addr.sin_addr));
 
         //add it to the queue
         add_connection(connection_queue,  connection_fd);
@@ -303,28 +308,23 @@ size_t readline(int connection, char* buffer, size_t size)
         else
         {
             c = '\n';
-            printf("ended");
         }
     }
 
     //terminate it with null
     buffer[i] = '\0';
-
-    printf("returning %s", buffer);
     return i;
 }
 
 /*
 * Writes a line to the conncetion
 * PRE: connection is established, str contains appropriate data
-* POST:  data will be sent over c onnection
+* POST:  data will be sent over connection
 * PARAMS:  connection to send on, string to send
 */
 void write_line(int connection, char* str)
-{
-    printf("Sending response %s", str );
-    if (send(connection, str,(int)strlen(str), 0) == -1)
-        perror("Unable to send line");
+{    if (send(connection, str,(int)strlen(str), 0) == -1)
+        printf("Unable to send line");
 }
 
 /*

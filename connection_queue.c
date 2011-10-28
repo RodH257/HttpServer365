@@ -1,5 +1,4 @@
 #include "connection_queue.h"
-#include <stdio.h>
 #include <stdlib.h>
 
 
@@ -41,8 +40,6 @@ void add_connection(connection_queue_t *queue, int connection)
     queue->last = ++queue->last % QUEUE_SIZE;
     //add to queue
     queue->connection_queue[queue->last] = connection;
-
-    printf("Queued connection %d,  at position %d \n", connection, queue->last);
 
     //signal there's been one added
     sem_post(&queue->slots_used);
